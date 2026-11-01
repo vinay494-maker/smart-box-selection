@@ -1,0 +1,103 @@
+{% extends 'base.html' %}
+
+{% block title %}Orders Packing Queue | BoxAI{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+        <div>
+            <h1 class="text-2xl font-extrabold text-slate-900 tracking-tight">Customer Orders Queue</h1>
+            <p class="text-xs text-slate-500">Orders awaiting warehouse packing, assigned boxes, and packing recommendations.</p>
+        </div>
+        <div class="flex items-center gap-2">
+            <a href="{% url 'dashboard' %}" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm shadow-blue-500/20">
+                <i class="fa-solid fa-boxes-packing"></i> Open Packing Terminal
+            </a>
+        </div>
+    </div>
+
+    <!-- Orders Table -->
+    <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs">
+                <thead class="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200 uppercase tracking-wider text-[11px]">
+                    <tr>
+                        <th class="p-3.5">Order #</th>
+                        <th class="p-3.5">Customer</th>
+                        <th class="p-3.5">Status</th>
+                        <th class="p-3.5">Items</th>
+                        <th class="p-3.5">Weight / Volume</th>
+                        <th class="p-3.5">Box Recommendation</th>
+                        <th class="p-3.5 text-right">Actions</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                    {% for ord in orders %}
+                    <tr class="hover:bg-slate-50/70 transition">
+                        <td class="p-3.5">
+                            <span class="font-bold text-slate-900 text-sm font-mono">{{ ord.order_number }}</span>
+                            <div class="text-[10px] text-slate-400">{{ ord.created_at|date:"M d, Y H:i" }}</div>
+                        </td>
+                        <td class="p-3.5">
+                            <div class="font-bold text-slate-800">{{ ord.customer_name }}</div>
+                            <div class="text-[11px] text-slate-400">{{ ord.customer_email|default:"customer@example.com" }}</div>
+                        </td>
+                        <td class="p-3.5">
+                            {% if ord.status == 'PENDING' %}
+                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-800">
+                                <span class="w-1.5 h-1.5 rounded-full bg-amber-500 mr-1.5 animate-pulse"></span> Pending Packing
+                            </span>
+                            {% elif ord.status == 'PACKED' %}
+                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800">
+                                <i class="fa-solid fa-check mr-1 text-emerald-600"></i> Packed
+                            </span>
+                            {% else %}
+                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-blue-100 text-blue-800">
+                                Shipped
+                            </span>
+                            {% endif %}
+                        </td>
+                        <td class="p-3.5">
+                            <div class="font-bold text-slate-800">{{ ord.total_items_count }} items</div>
+                            <div class="text-[11px] text-slate-500 truncate max-w-xs">
+                                {% for it in ord.items.all %}
+                                {{ it.quantity }}x {{ it.product.name }}{% if not forloop.last %}, {% endif %}
+                                {% endfor %}
+                            </div>
+                        </td>
+                        <td class="p-3.5 font-mono">
+                            <div class="font-bold text-slate-800">{{ ord.total_weight|floatformat:2 }} kg</div>
+                            <div class="text-[11px] text-slate-400">{{ ord.total_volume|floatformat:0 }} cm³</div>
+                        </td>
+                        <td class="p-3.5">
+                            {% with rec=ord.recommendations.first %}
+                            {% if rec %}
+                            <div class="flex items-center gap-1.5">
+                                <span class="font-bold text-slate-800">
+                                    {% for pb in rec.packed_boxes.all %}
+                                    {{ pb.box.code }}{% if not forloop.last %} + {% endif %}
+                                    {% endfor %}
+                                </span>
+                                <span class="text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded">
+                                    ${{ rec.total_cost }}
+                                </span>
+                            </div>
+                            <div class="text-[10px] text-slate-400 mt-0.5">{{ rec.status }} &bull; {{ rec.algorithm_used }}</div>
+                            {% else %}
+                            <span class="text-slate-400 italic">Not calculated yet</span>
+                            {% endif %}
+                            {% endwith %}
+                        </td>
+                        <td class="p-3.5 text-right">
+                            <a href="{% url 'dashboard' %}" class="inline-flex items-center px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg text-xs font-bold transition">
+                                <i class="fa-solid fa-box-open mr-1.5"></i> Pack
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

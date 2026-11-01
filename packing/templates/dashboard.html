@@ -1,0 +1,825 @@
+{% extends 'base.html' %}
+
+{% block title %}Warehouse Packing Terminal & 3D Simulator | BoxAI{% endblock %}
+
+{% block extra_head %}
+<!-- Three.js CDN -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<!-- Three.js OrbitControls -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+
+    <!-- Top Station Header & Status Banner -->
+    <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div>
+            <div class="flex items-center gap-2">
+                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-800">
+                    <i class="fa-solid fa-industry mr-1.5 text-blue-600"></i> Packing Station #01
+                </span>
+                <span class="text-xs text-slate-400 font-medium">&bull; Operator: Warehouse Fulfillment Team</span>
+            </div>
+            <h1 class="text-2xl font-extrabold text-slate-900 tracking-tight mt-1">AI-Assisted Box Selection & 3D Packing Terminal</h1>
+            <p class="text-xs text-slate-500">Computes the mathematically cheapest feasible box meeting 3D physical, weight, and fragility constraints.</p>
+        </div>
+
+        <div class="flex items-center gap-3">
+            <button id="modeOrderBtn" onclick="switchMode('order')" class="px-4 py-2 rounded-xl text-sm font-semibold transition shadow-sm bg-blue-600 text-white">
+                <i class="fa-solid fa-list-check mr-1.5"></i> Orders Queue
+            </button>
+            <button id="modeSimBtn" onclick="switchMode('simulator')" class="px-4 py-2 rounded-xl text-sm font-semibold transition bg-slate-100 text-slate-700 hover:bg-slate-200">
+                <i class="fa-solid fa-wand-magic-sparkles mr-1.5 text-blue-600"></i> Custom Simulator
+            </button>
+        </div>
+    </div>
+
+    <!-- Main Dual-Column Layout -->
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+        <!-- Left Column: Input Selection / Cart (5 Cols) -->
+        <div class="lg:col-span-5 space-y-6">
+
+            <!-- MODE 1: PENDING ORDERS -->
+            <div id="orderModeSection" class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <div class="p-4 bg-slate-50/70 border-b border-slate-200 flex justify-between items-center">
+                    <h3 class="font-bold text-slate-900 text-sm flex items-center gap-2">
+                        <i class="fa-solid fa-boxes-stacked text-blue-600"></i> Select Customer Order
+                    </h3>
+                    <span class="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-semibold">
+                        {{ pending_orders.count }} Pending
+                    </span>
+                </div>
+
+                <div class="p-5 space-y-4">
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">Order Number</label>
+                        <select id="orderSelect" onchange="loadSelectedOrder()" class="w-full bg-white border border-slate-300 rounded-xl px-3.5 py-2.5 text-sm font-medium text-slate-800 focus:ring-2 focus:ring-blue-500 focus:outline-none transition">
+                            <option value="">-- Choose an Order to Pack --</option>
+                            {% for ord in pending_orders %}
+                            <option value="{{ ord.id }}" data-order-num="{{ ord.order_number }}" data-customer="{{ ord.customer_name }}">
+                                {{ ord.order_number }} - {{ ord.customer_name }} ({{ ord.total_items_count }} items, {{ ord.total_weight }} kg)
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <!-- Selected Order Item Manifest Table -->
+                    <div id="orderItemsContainer" class="hidden space-y-3">
+                        <div class="flex justify-between items-center text-xs font-semibold text-slate-500 pt-1">
+                            <span>ORDER CONTENTS (<span id="manifestCount">0</span> items)</span>
+                            <span id="orderNotesBadge" class="text-slate-600 italic"></span>
+                        </div>
+
+                        <div class="border border-slate-200 rounded-xl overflow-hidden max-h-64 overflow-y-auto">
+                            <table class="w-full text-left text-xs">
+                                <thead class="bg-slate-100 text-slate-600 font-semibold border-b border-slate-200">
+                                    <tr>
+                                        <th class="p-2.5">Item</th>
+                                        <th class="p-2.5">Qty</th>
+                                        <th class="p-2.5">Dimensions</th>
+                                        <th class="p-2.5">Weight</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="manifestTableBody" class="divide-y divide-slate-100">
+                                    <!-- Dynamic rows -->
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <button id="calculateOrderBtn" onclick="calculateBoxForOrder()" class="w-full mt-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold py-3 px-4 rounded-xl shadow-md shadow-blue-500/20 flex items-center justify-center gap-2 transition transform active:scale-[0.99]">
+                            <i class="fa-solid fa-bolt-lightning text-amber-300"></i>
+                            <span>Calculate Best Box (AI Pack)</span>
+                        </button>
+                    </div>
+
+                    <div id="orderEmptyState" class="text-center py-8 text-slate-400">
+                        <i class="fa-solid fa-inbox text-4xl mb-2 text-slate-300"></i>
+                        <p class="text-xs">Select an order from the dropdown above to load items.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- MODE 2: CUSTOM AD-HOC SIMULATOR (Hidden by default) -->
+            <div id="simulatorModeSection" class="hidden bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <div class="p-4 bg-slate-50/70 border-b border-slate-200 flex justify-between items-center">
+                    <h3 class="font-bold text-slate-900 text-sm flex items-center gap-2">
+                        <i class="fa-solid fa-sliders text-indigo-600"></i> Build Custom Items Cart
+                    </h3>
+                    <button onclick="clearCustomCart()" class="text-xs text-rose-600 hover:text-rose-700 font-medium">Clear All</button>
+                </div>
+
+                <div class="p-5 space-y-4">
+                    <!-- Quick Add from Catalog -->
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">Quick Add Catalog Product</label>
+                        <div class="flex gap-2">
+                            <select id="catalogProductSelect" class="flex-1 bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-medium focus:ring-2 focus:ring-blue-500">
+                                {% for prod in products %}
+                                <option value="{{ prod.id }}" 
+                                    data-name="{{ prod.name }}"
+                                    data-sku="{{ prod.sku }}"
+                                    data-l="{{ prod.length }}"
+                                    data-w="{{ prod.width }}"
+                                    data-h="{{ prod.height }}"
+                                    data-wt="{{ prod.weight }}"
+                                    data-fragile="{{ prod.is_fragile|yesno:'true,false' }}"
+                                    data-upright="{{ prod.keep_upright|yesno:'true,false' }}">
+                                    [{{ prod.sku }}] {{ prod.name }} ({{ prod.dimensions_display }}, {{ prod.weight }}kg)
+                                </option>
+                                {% endfor %}
+                            </select>
+                            <button onclick="addCatalogProduct()" class="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition">
+                                <i class="fa-solid fa-plus"></i> Add
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Custom Dimensions Form -->
+                    <div class="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2.5">
+                        <div class="text-xs font-bold text-slate-700">Or Add Custom Item Dimensions:</div>
+                        <div class="grid grid-cols-2 gap-2">
+                            <input type="text" id="customName" placeholder="Item Name / SKU" class="col-span-2 px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs">
+                            <input type="number" id="customL" step="0.1" placeholder="Length (cm)" class="px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs">
+                            <input type="number" id="customW" step="0.1" placeholder="Width (cm)" class="px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs">
+                            <input type="number" id="customH" step="0.1" placeholder="Height (cm)" class="px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs">
+                            <input type="number" id="customWt" step="0.05" placeholder="Weight (kg)" class="px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs">
+                        </div>
+                        <div class="flex items-center justify-between pt-1">
+                            <div class="flex items-center gap-3">
+                                <label class="flex items-center gap-1.5 text-xs text-slate-700 cursor-pointer">
+                                    <input type="checkbox" id="customFragile" class="rounded text-red-600 focus:ring-red-500">
+                                    <span>Fragile</span>
+                                </label>
+                                <label class="flex items-center gap-1.5 text-xs text-slate-700 cursor-pointer">
+                                    <input type="checkbox" id="customUpright" class="rounded text-blue-600 focus:ring-blue-500">
+                                    <span>Keep Upright</span>
+                                </label>
+                            </div>
+                            <button onclick="addCustomItem()" class="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold">
+                                Add Custom
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Custom Cart Items List -->
+                    <div class="space-y-2">
+                        <div class="text-xs font-bold text-slate-500 uppercase tracking-wider">Cart Items (<span id="cartCount">0</span>)</div>
+                        <div id="customCartList" class="space-y-1.5 max-h-48 overflow-y-auto">
+                            <div class="text-center py-4 text-xs text-slate-400">Cart is empty. Add items above.</div>
+                        </div>
+                    </div>
+
+                    <button id="calculateSimBtn" onclick="calculateBoxForCustomCart()" class="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold py-3 px-4 rounded-xl shadow-md shadow-blue-500/20 flex items-center justify-center gap-2 transition">
+                        <i class="fa-solid fa-cube text-amber-300"></i>
+                        <span>Run 3D Box Recommender</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Box Sizes Reference Palette -->
+            <div class="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
+                <div class="text-xs font-bold text-slate-600 uppercase tracking-wider mb-2 flex items-center justify-between">
+                    <span>Available Box Inventory</span>
+                    <a href="{% url 'boxes' %}" class="text-blue-600 hover:underline text-[11px]">View All</a>
+                </div>
+                <div class="grid grid-cols-2 gap-2 text-xs">
+                    {% for box in boxes %}
+                    <div class="p-2 rounded-lg bg-slate-50 border border-slate-200">
+                        <div class="font-bold text-slate-800 truncate">{{ box.name }}</div>
+                        <div class="text-[11px] text-slate-500 font-mono">{{ box.inner_length }}×{{ box.inner_width }}×{{ box.inner_height }} cm</div>
+                        <div class="flex justify-between items-center mt-1 text-[11px]">
+                            <span class="text-slate-600">Max {{ box.max_weight }}kg</span>
+                            <span class="font-bold text-emerald-600">${{ box.cost }}</span>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Right Column: 3D Visualization, AI Insights & Steps (7 Cols) -->
+        <div class="lg:col-span-7 space-y-6">
+
+            <!-- Empty / Awaiting Calculation State -->
+            <div id="resultsEmptyPlaceholder" class="bg-white rounded-2xl border border-slate-200 p-12 text-center shadow-sm">
+                <div class="w-16 h-16 mx-auto mb-4 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center text-3xl">
+                    <i class="fa-solid fa-cube animate-pulse"></i>
+                </div>
+                <h3 class="text-lg font-bold text-slate-800">Ready for 3D Box Selection</h3>
+                <p class="text-xs text-slate-500 max-w-md mx-auto mt-1">
+                    Select an order from the queue or build a custom items cart, then click <strong>Calculate Best Box</strong>. 
+                    The algorithm will evaluate 3D rotation, weight capacities, and minimize packaging costs.
+                </p>
+            </div>
+
+            <!-- Loading Spinner State -->
+            <div id="loadingIndicator" class="hidden bg-white rounded-2xl border border-slate-200 p-12 text-center shadow-sm">
+                <div class="inline-block animate-spin text-blue-600 text-4xl mb-3">
+                    <i class="fa-solid fa-circle-notch"></i>
+                </div>
+                <h4 class="font-bold text-slate-800 text-sm">Running 3D Packing Simulation...</h4>
+                <p class="text-xs text-slate-400 mt-1">Testing 6-DOF rotations, empty space decompositions, and cost optimization.</p>
+            </div>
+
+            <!-- RESULTS CONTAINER (Hidden until calculated) -->
+            <div id="resultsContainer" class="hidden space-y-6">
+
+                <!-- 1. Optimal Box Hero Card -->
+                <div class="bg-gradient-to-br from-slate-900 to-indigo-950 text-white rounded-2xl p-6 shadow-xl relative overflow-hidden border border-slate-800">
+                    <div class="absolute -right-8 -bottom-8 opacity-10 text-9xl text-white">
+                        <i class="fa-solid fa-box-open"></i>
+                    </div>
+
+                    <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800/80 pb-4 mb-4">
+                        <div class="flex items-center gap-3">
+                            <span class="px-2.5 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-xs font-bold tracking-wider uppercase flex items-center gap-1.5">
+                                <i class="fa-solid fa-circle-check text-emerald-400"></i> <span id="statusBadge">Optimal Fit</span>
+                            </span>
+                            <span id="multiBoxBadge" class="hidden px-2.5 py-1 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/40 text-xs font-bold">
+                                Multi-Box Partition
+                            </span>
+                        </div>
+                        <div class="text-right">
+                            <div class="text-xs text-slate-400 uppercase tracking-wider font-semibold">Total Box Cost</div>
+                            <div class="text-3xl font-extrabold text-emerald-400" id="heroBoxCost">$0.00</div>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <div class="text-xs text-indigo-300 font-mono tracking-wider" id="heroBoxCode">BOX-CODE</div>
+                            <h2 class="text-xl font-extrabold text-white tracking-tight" id="heroBoxName">Box Name</h2>
+                            <p class="text-xs text-slate-300 mt-0.5" id="heroBoxDimensions">0 × 0 × 0 cm</p>
+                        </div>
+
+                        <!-- Metric Badges -->
+                        <div class="grid grid-cols-3 gap-2 text-center">
+                            <div class="bg-slate-800/60 backdrop-blur rounded-xl p-2 border border-slate-700/60">
+                                <div class="text-[10px] text-slate-400 uppercase font-semibold">Volume Used</div>
+                                <div class="text-base font-bold text-blue-300" id="heroUtilization">0%</div>
+                            </div>
+                            <div class="bg-slate-800/60 backdrop-blur rounded-xl p-2 border border-slate-700/60">
+                                <div class="text-[10px] text-slate-400 uppercase font-semibold">Payload Wt</div>
+                                <div class="text-base font-bold text-amber-300" id="heroPayload">0 kg</div>
+                            </div>
+                            <div class="bg-slate-800/60 backdrop-blur rounded-xl p-2 border border-slate-700/60">
+                                <div class="text-[10px] text-slate-400 uppercase font-semibold">Billable Wt</div>
+                                <div class="text-base font-bold text-purple-300" id="heroBillable">0 kg</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Multi-box Tabs (If split order) -->
+                    <div id="multiBoxTabsContainer" class="hidden mt-4 pt-3 border-t border-slate-800 flex gap-2">
+                        <!-- Dynamic box tabs -->
+                    </div>
+                </div>
+
+                <!-- 2. Interactive 3D Viewport Card -->
+                <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                    <div class="p-4 bg-slate-50/80 border-b border-slate-200 flex justify-between items-center">
+                        <div class="flex items-center gap-2">
+                            <i class="fa-solid fa-cube text-blue-600"></i>
+                            <h3 class="font-bold text-slate-900 text-sm">3D Box Packing Visualizer</h3>
+                            <span class="text-[11px] text-slate-400">(Drag to rotate &bull; Scroll to zoom)</span>
+                        </div>
+                        <div class="flex items-center gap-1.5">
+                            <button onclick="visualizer.resetView()" title="Reset 3D View" class="px-2.5 py-1 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg text-xs font-semibold text-slate-600 transition">
+                                <i class="fa-solid fa-rotate-left"></i> 3D
+                            </button>
+                            <button onclick="visualizer.setTopView()" title="Top Down View" class="px-2.5 py-1 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg text-xs font-semibold text-slate-600 transition">
+                                <i class="fa-solid fa-arrows-to-eye"></i> Top
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 3D Canvas Viewport -->
+                    <div id="viewport3D" class="w-full h-80 bg-slate-100 relative cursor-grab active:cursor-grabbing">
+                        <!-- Canvas injected here -->
+                    </div>
+
+                    <!-- Color Legend Bar -->
+                    <div class="p-3 bg-white border-t border-slate-100 flex flex-wrap items-center gap-3 text-xs" id="itemColorLegend">
+                        <!-- Dynamic color tags -->
+                    </div>
+                </div>
+
+                <!-- 3. AI Packaging Advisor & Void Fill Guidance Card -->
+                <div class="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-4">
+                    <div class="flex items-center gap-2.5">
+                        <div class="w-7 h-7 rounded-lg bg-indigo-100 text-indigo-700 flex items-center justify-center text-xs font-bold">
+                            <i class="fa-solid fa-brain"></i>
+                        </div>
+                        <div>
+                            <h3 class="font-bold text-slate-900 text-sm">AI Packing Advisor Insights</h3>
+                            <p class="text-[11px] text-slate-400">Intelligent rationale, void fill requirements, and freight optimization</p>
+                        </div>
+                    </div>
+
+                    <!-- AI Executive Summary Banner -->
+                    <div class="p-3.5 bg-blue-50/80 border border-blue-200 rounded-xl text-xs text-blue-900 font-medium leading-relaxed" id="aiSummaryText">
+                        Summary...
+                    </div>
+
+                    <!-- Void Fill & Cushioning Pill -->
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div class="p-3 rounded-xl bg-slate-50 border border-slate-200">
+                            <div class="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-1.5">
+                                <i class="fa-solid fa-shield-heart text-amber-500"></i> Recommended Void Fill
+                            </div>
+                            <div class="text-xs font-bold text-slate-800" id="voidMaterial">Air Pillows</div>
+                            <p class="text-[11px] text-slate-500 mt-0.5" id="voidSummary">Void fill instructions...</p>
+                        </div>
+
+                        <div class="p-3 rounded-xl bg-slate-50 border border-slate-200">
+                            <div class="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-1.5">
+                                <i class="fa-solid fa-truck-fast text-blue-500"></i> Freight Dimensional Weight
+                            </div>
+                            <div class="text-xs font-bold text-slate-800" id="freightSummary">Carrier Billable Wt: 0 kg</div>
+                            <p class="text-[11px] text-slate-500 mt-0.5" id="freightNote">Dimensional freight analysis...</p>
+                        </div>
+                    </div>
+
+                    <!-- Decision Rationale List -->
+                    <div class="space-y-1.5">
+                        <div class="text-xs font-bold text-slate-700">Why this box was chosen:</div>
+                        <ul class="text-xs text-slate-600 space-y-1 list-disc list-inside bg-slate-50 p-3 rounded-xl border border-slate-200" id="rationaleList">
+                            <!-- Dynamic rationale bullet points -->
+                        </ul>
+                    </div>
+
+                    <!-- Safety Warnings (If Any) -->
+                    <div id="safetyAlertsContainer" class="hidden p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 space-y-1">
+                        <div class="font-bold flex items-center gap-1.5">
+                            <i class="fa-solid fa-triangle-exclamation text-amber-600"></i> Handling & Fragility Alerts:
+                        </div>
+                        <ul id="safetyAlertsList" class="list-disc list-inside space-y-0.5 text-amber-800">
+                            <!-- Dynamic alerts -->
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- 4. Step-by-Step Packing Manifest for Packers -->
+                <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                    <div class="p-4 bg-slate-50/80 border-b border-slate-200 flex justify-between items-center">
+                        <h3 class="font-bold text-slate-900 text-sm flex items-center gap-2">
+                            <i class="fa-solid fa-list-ol text-blue-600"></i> Warehouse Step-by-Step Packing Guide
+                        </h3>
+                        <span class="text-xs text-slate-500 font-medium">Follow sequence for stability</span>
+                    </div>
+
+                    <div class="divide-y divide-slate-100" id="packingStepsList">
+                        <!-- Dynamic steps -->
+                    </div>
+                </div>
+
+                <!-- 5. Complete / Dispatch Action -->
+                <div id="actionFooter" class="p-4 bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row justify-between items-center gap-3">
+                    <div class="text-xs text-slate-500">
+                        Recommendation verified & ready for physical sealing.
+                    </div>
+                    <div class="flex gap-2 w-full sm:w-auto">
+                        <button onclick="window.print()" class="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition flex items-center gap-1.5">
+                            <i class="fa-solid fa-print"></i> Print Manifest
+                        </button>
+                        <button id="markPackedBtn" onclick="markCurrentOrderPacked()" class="flex-1 sm:flex-none px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-500/20 transition flex items-center justify-center gap-1.5">
+                            <i class="fa-solid fa-check"></i> Mark Order Packed
+                        </button>
+                    </div>
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="/static/js/packing_visualizer.js"></script>
+<script>
+    let visualizer = null;
+    let currentCalculation = null;
+    let selectedOrderId = null;
+    let customCart = [];
+    let currentBoxIndex = 0;
+
+    // Sample order items data cached from Django template
+    const orderDataMap = {
+        {% for ord in pending_orders %}
+        "{{ ord.id }}": {
+            id: {{ ord.id }},
+            order_number: "{{ ord.order_number }}",
+            customer: "{{ ord.customer_name }}",
+            notes: "{{ ord.notes|escapejs }}",
+            items: [
+                {% for it in ord.items.all %}
+                {
+                    sku: "{{ it.product.sku }}",
+                    name: "{{ it.product.name|escapejs }}",
+                    length: {{ it.product.length }},
+                    width: {{ it.product.width }},
+                    height: {{ it.product.height }},
+                    weight: {{ it.product.weight }},
+                    quantity: {{ it.quantity }},
+                    is_fragile: {{ it.product.is_fragile|yesno:"true,false" }},
+                    keep_upright: {{ it.product.keep_upright|yesno:"true,false" }},
+                    product_id: {{ it.product.id }}
+                },
+                {% endfor %}
+            ]
+        },
+        {% endfor %}
+    };
+
+    document.addEventListener('DOMContentLoaded', () => {
+        visualizer = new Box3DVisualizer('viewport3D');
+    });
+
+    function switchMode(mode) {
+        const orderSec = document.getElementById('orderModeSection');
+        const simSec = document.getElementById('simulatorModeSection');
+        const orderBtn = document.getElementById('modeOrderBtn');
+        const simBtn = document.getElementById('modeSimBtn');
+
+        if (mode === 'order') {
+            orderSec.classList.remove('hidden');
+            simSec.classList.add('hidden');
+            orderBtn.className = "px-4 py-2 rounded-xl text-sm font-semibold transition shadow-sm bg-blue-600 text-white";
+            simBtn.className = "px-4 py-2 rounded-xl text-sm font-semibold transition bg-slate-100 text-slate-700 hover:bg-slate-200";
+        } else {
+            orderSec.classList.add('hidden');
+            simSec.classList.remove('hidden');
+            simBtn.className = "px-4 py-2 rounded-xl text-sm font-semibold transition shadow-sm bg-blue-600 text-white";
+            orderBtn.className = "px-4 py-2 rounded-xl text-sm font-semibold transition bg-slate-100 text-slate-700 hover:bg-slate-200";
+        }
+    }
+
+    function loadSelectedOrder() {
+        const select = document.getElementById('orderSelect');
+        const orderId = select.value;
+        selectedOrderId = orderId;
+
+        const container = document.getElementById('orderItemsContainer');
+        const emptyState = document.getElementById('orderEmptyState');
+        const tableBody = document.getElementById('manifestTableBody');
+        const countSpan = document.getElementById('manifestCount');
+        const notesSpan = document.getElementById('orderNotesBadge');
+
+        if (!orderId || !orderDataMap[orderId]) {
+            container.classList.add('hidden');
+            emptyState.classList.remove('hidden');
+            return;
+        }
+
+        const data = orderDataMap[orderId];
+        emptyState.classList.add('hidden');
+        container.classList.remove('hidden');
+
+        notesSpan.textContent = data.notes ? `Note: ${data.notes}` : '';
+        
+        let totalCount = 0;
+        tableBody.innerHTML = '';
+        data.items.forEach(it => {
+            totalCount += it.quantity;
+            const tr = document.createElement('tr');
+            tr.className = "hover:bg-slate-50 transition";
+            tr.innerHTML = `
+                <td class="p-2.5">
+                    <div class="font-bold text-slate-800">${it.name}</div>
+                    <div class="text-[10px] text-slate-400 font-mono">${it.sku} ${it.is_fragile ? '<span class="text-red-500 font-bold ml-1">● FRAGILE</span>' : ''} ${it.keep_upright ? '<span class="text-blue-500 font-bold ml-1">↑ UPRIGHT</span>' : ''}</div>
+                </td>
+                <td class="p-2.5 font-bold text-slate-700">${it.quantity}x</td>
+                <td class="p-2.5 text-slate-500 font-mono">${it.length}×${it.width}×${it.height}cm</td>
+                <td class="p-2.5 font-mono text-slate-700">${(it.weight * it.quantity).toFixed(2)}kg</td>
+            `;
+            tableBody.appendChild(tr);
+        });
+        countSpan.textContent = totalCount;
+    }
+
+    async function calculateBoxForOrder() {
+        if (!selectedOrderId) return;
+        showLoading(true);
+
+        try {
+            const response = await fetch('/api/recommend-box/', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ order_id: parseInt(selectedOrderId) })
+            });
+            const data = await response.json();
+            showLoading(false);
+            if (data.success) {
+                renderResults(data);
+            } else {
+                alert('Box Recommendation Failed: ' + (data.error || 'Unknown error'));
+            }
+        } catch (err) {
+            showLoading(false);
+            alert('Error connecting to packing engine API: ' + err.message);
+        }
+    }
+
+    // Custom Cart methods
+    function addCatalogProduct() {
+        const select = document.getElementById('catalogProductSelect');
+        const opt = select.selectedOptions[0];
+        if (!opt) return;
+
+        customCart.push({
+            name: opt.getAttribute('data-name'),
+            sku: opt.getAttribute('data-sku'),
+            length: parseFloat(opt.getAttribute('data-l')),
+            width: parseFloat(opt.getAttribute('data-w')),
+            height: parseFloat(opt.getAttribute('data-h')),
+            weight: parseFloat(opt.getAttribute('data-wt')),
+            is_fragile: opt.getAttribute('data-fragile') === 'true',
+            keep_upright: opt.getAttribute('data-upright') === 'true',
+            quantity: 1,
+            product_id: parseInt(opt.value)
+        });
+        renderCustomCart();
+    }
+
+    function addCustomItem() {
+        const name = document.getElementById('customName').value || 'Custom Item';
+        const l = parseFloat(document.getElementById('customL').value);
+        const w = parseFloat(document.getElementById('customW').value);
+        const h = parseFloat(document.getElementById('customH').value);
+        const wt = parseFloat(document.getElementById('customWt').value);
+        const fragile = document.getElementById('customFragile').checked;
+        const upright = document.getElementById('customUpright').checked;
+
+        if (!l || !w || !h || !wt) {
+            alert('Please enter valid dimensions and weight.');
+            return;
+        }
+
+        customCart.push({
+            name: name,
+            sku: 'CUSTOM-' + (customCart.length + 1),
+            length: l,
+            width: w,
+            height: h,
+            weight: wt,
+            is_fragile: fragile,
+            keep_upright: upright,
+            quantity: 1
+        });
+
+        // Reset form
+        document.getElementById('customName').value = '';
+        document.getElementById('customL').value = '';
+        document.getElementById('customW').value = '';
+        document.getElementById('customH').value = '';
+        document.getElementById('customWt').value = '';
+        document.getElementById('customFragile').checked = false;
+        document.getElementById('customUpright').checked = false;
+
+        renderCustomCart();
+    }
+
+    function removeCartItem(idx) {
+        customCart.splice(idx, 1);
+        renderCustomCart();
+    }
+
+    function clearCustomCart() {
+        customCart = [];
+        renderCustomCart();
+    }
+
+    function renderCustomCart() {
+        const container = document.getElementById('customCartList');
+        const countSpan = document.getElementById('cartCount');
+        countSpan.textContent = customCart.length;
+
+        if (customCart.length === 0) {
+            container.innerHTML = '<div class="text-center py-4 text-xs text-slate-400">Cart is empty. Add items above.</div>';
+            return;
+        }
+
+        container.innerHTML = '';
+        customCart.forEach((item, idx) => {
+            const div = document.createElement('div');
+            div.className = "flex justify-between items-center p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs";
+            div.innerHTML = `
+                <div>
+                    <span class="font-bold text-slate-800">${item.name}</span>
+                    <span class="text-slate-500 font-mono ml-1">(${item.length}×${item.width}×${item.height}cm, ${item.weight}kg)</span>
+                    ${item.is_fragile ? '<span class="text-red-500 font-bold ml-1">● Fragile</span>' : ''}
+                </div>
+                <button onclick="removeCartItem(${idx})" class="text-slate-400 hover:text-red-500 transition px-1">
+                    <i class="fa-solid fa-trash-can"></i>
+                </button>
+            `;
+            container.appendChild(div);
+        });
+    }
+
+    async function calculateBoxForCustomCart() {
+        if (customCart.length === 0) {
+            alert('Cart is empty. Please add at least 1 item.');
+            return;
+        }
+        showLoading(true);
+
+        try {
+            const response = await fetch('/api/recommend-box/', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ items: customCart })
+            });
+            const data = await response.json();
+            showLoading(false);
+            if (data.success) {
+                renderResults(data);
+            } else {
+                alert('Box Recommendation Failed: ' + (data.error || 'Unknown error'));
+            }
+        } catch (err) {
+            showLoading(false);
+            alert('Error connecting to packing engine API: ' + err.message);
+        }
+    }
+
+    function showLoading(isLoading) {
+        document.getElementById('loadingIndicator').classList.toggle('hidden', !isLoading);
+        document.getElementById('resultsEmptyPlaceholder').classList.add('hidden');
+        if (isLoading) {
+            document.getElementById('resultsContainer').classList.add('hidden');
+        }
+    }
+
+    function renderResults(data) {
+        currentCalculation = data;
+        currentBoxIndex = 0;
+
+        document.getElementById('resultsContainer').classList.remove('hidden');
+        document.getElementById('heroBoxCost').textContent = `$${data.total_cost.toFixed(2)}`;
+
+        // Status Badge
+        const statusBadge = document.getElementById('statusBadge');
+        const multiBoxBadge = document.getElementById('multiBoxBadge');
+        if (data.is_multi_box) {
+            statusBadge.textContent = "Multi-Box Required";
+            multiBoxBadge.classList.remove('hidden');
+            multiBoxBadge.textContent = `${data.total_boxes} Boxes Needed`;
+        } else {
+            statusBadge.textContent = "Optimal Fit";
+            multiBoxBadge.classList.add('hidden');
+        }
+
+        // Multi box tabs
+        const tabsContainer = document.getElementById('multiBoxTabsContainer');
+        if (data.boxes.length > 1) {
+            tabsContainer.classList.remove('hidden');
+            tabsContainer.innerHTML = '';
+            data.boxes.forEach((b, idx) => {
+                const btn = document.createElement('button');
+                btn.className = `px-3 py-1 rounded-lg text-xs font-bold transition ${idx === 0 ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`;
+                btn.textContent = `Box ${b.box_index}: ${b.box_name}`;
+                btn.onclick = () => selectBoxTab(idx);
+                tabsContainer.appendChild(btn);
+            });
+        } else {
+            tabsContainer.classList.add('hidden');
+        }
+
+        // Display current active box
+        displayBoxData(data.boxes[0]);
+
+        // AI Advisor Insights
+        const ai = data.ai_insights;
+        document.getElementById('aiSummaryText').textContent = ai.ai_executive_summary;
+
+        if (ai.void_fill) {
+            document.getElementById('voidMaterial').textContent = `${ai.void_fill.recommended_material} (${ai.void_fill.void_ratio_pct.toFixed(0)}% Void)`;
+            document.getElementById('voidSummary').textContent = ai.void_fill.summary;
+        }
+
+        if (ai.carrier_volumetric_weight_kg) {
+            document.getElementById('freightSummary').textContent = `Carrier Billable Wt: ${ai.billable_weight_kg} kg (Volumetric: ${ai.carrier_volumetric_weight_kg} kg)`;
+            document.getElementById('freightNote').textContent = ai.is_dim_weight_dominant 
+                ? "Notice: Dimensional weight exceeds actual payload weight and sets courier billing." 
+                : "Standard billing: Actual scale weight applies.";
+        }
+
+        // Rationale list
+        const rationaleUl = document.getElementById('rationaleList');
+        rationaleUl.innerHTML = '';
+        (ai.decision_rationale || []).forEach(r => {
+            const li = document.createElement('li');
+            li.textContent = r;
+            rationaleUl.appendChild(li);
+        });
+
+        // Safety Alerts
+        const safetyAlerts = ai.safety_alerts || [];
+        const safetyContainer = document.getElementById('safetyAlertsContainer');
+        const safetyUl = document.getElementById('safetyAlertsList');
+        if (safetyAlerts.length > 0) {
+            safetyContainer.classList.remove('hidden');
+            safetyUl.innerHTML = '';
+            safetyAlerts.forEach(alertText => {
+                const li = document.createElement('li');
+                li.textContent = alertText;
+                safetyUl.appendChild(li);
+            });
+        } else {
+            safetyContainer.classList.add('hidden');
+        }
+
+        // Hide mark packed button if custom ad-hoc simulator
+        const markBtn = document.getElementById('markPackedBtn');
+        if (!selectedOrderId) {
+            markBtn.classList.add('hidden');
+        } else {
+            markBtn.classList.remove('hidden');
+        }
+    }
+
+    function selectBoxTab(idx) {
+        currentBoxIndex = idx;
+        const tabsContainer = document.getElementById('multiBoxTabsContainer');
+        Array.from(tabsContainer.children).forEach((btn, i) => {
+            btn.className = `px-3 py-1 rounded-lg text-xs font-bold transition ${i === idx ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`;
+        });
+        displayBoxData(currentCalculation.boxes[idx]);
+    }
+
+    function displayBoxData(box) {
+        document.getElementById('heroBoxCode').textContent = box.box_code;
+        document.getElementById('heroBoxName').textContent = box.box_name;
+        document.getElementById('heroBoxDimensions').textContent = `${box.dimensions.length} × ${box.dimensions.width} × ${box.dimensions.height} cm (Max ${box.max_weight_kg} kg)`;
+        document.getElementById('heroUtilization').textContent = `${box.volume_utilization_pct}%`;
+        document.getElementById('heroPayload').textContent = `${box.used_weight_kg} kg`;
+        document.getElementById('heroBillable').textContent = `${box.max_weight_kg} kg max`;
+
+        // Render in 3D
+        if (visualizer) {
+            visualizer.renderBoxPlan(box);
+        }
+
+        // Color Legend
+        const legendDiv = document.getElementById('itemColorLegend');
+        legendDiv.innerHTML = '<span class="font-bold text-slate-500 uppercase text-[10px]">Packed Items:</span>';
+        (box.placements || []).forEach(p => {
+            const span = document.createElement('span');
+            span.className = `inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-medium border ${p.is_fragile ? 'bg-red-50 text-red-700 border-red-200' : 'bg-slate-50 text-slate-700 border-slate-200'}`;
+            span.innerHTML = `<span class="w-2 h-2 rounded-full ${p.is_fragile ? 'bg-red-500' : 'bg-blue-500'}"></span> Step ${p.step}: ${p.name}`;
+            legendDiv.appendChild(span);
+        });
+
+        // Packing Steps Manifest
+        const stepsContainer = document.getElementById('packingStepsList');
+        stepsContainer.innerHTML = '';
+        (box.placements || []).forEach(p => {
+            const div = document.createElement('div');
+            div.className = "p-3.5 hover:bg-slate-50 flex items-start gap-3 transition";
+            div.innerHTML = `
+                <div class="w-6 h-6 rounded-full bg-blue-100 text-blue-700 font-bold flex items-center justify-center text-xs shrink-0 mt-0.5">
+                    ${p.step}
+                </div>
+                <div class="flex-1">
+                    <div class="flex items-center justify-between">
+                        <span class="font-bold text-slate-800 text-xs">${p.name}</span>
+                        <span class="text-[11px] font-mono text-slate-400">Position: (${p.coordinates.x}, ${p.coordinates.y}, ${p.coordinates.z}) cm</span>
+                    </div>
+                    <div class="text-[11px] text-slate-500 mt-0.5">
+                        Oriented size: <span class="font-mono text-slate-700">${p.oriented_dimensions.length}×${p.oriented_dimensions.width}×${p.oriented_dimensions.height} cm</span> &bull; 
+                        Rotation: <span class="text-blue-600 font-medium">${p.rotation}</span>
+                    </div>
+                    ${p.is_fragile ? '<div class="text-[11px] text-red-600 font-medium mt-1"><i class="fa-solid fa-triangle-exclamation"></i> Fragile item: Place on top surface; do not crush.</div>' : ''}
+                </div>
+            `;
+            stepsContainer.appendChild(div);
+        });
+    }
+
+    async function markCurrentOrderPacked() {
+        if (!selectedOrderId) return;
+        if (!confirm(`Confirm order #${selectedOrderId} is packed and ready for carrier dispatch?`)) return;
+
+        try {
+            const res = await fetch(`/api/orders/${selectedOrderId}/mark-packed/`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+            const data = await res.json();
+            if (data.success) {
+                alert(data.message);
+                location.reload();
+            }
+        } catch (e) {
+            alert('Failed to mark order packed: ' + e.message);
+        }
+    }
+</script>
+{% endblock %}
